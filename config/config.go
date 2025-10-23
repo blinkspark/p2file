@@ -8,7 +8,3 @@ var (
 	GetFile   = flag.String("g", "", "get target file")
 	IsListing = flag.Bool("l", false, "list all files")
 )
-
-func init() {
-	flag.Parse()
-}
