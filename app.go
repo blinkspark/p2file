@@ -1,10 +1,15 @@
 package p2file
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/signal"
+	"path"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
@@ -120,8 +125,82 @@ func (app *App) Serve(dirName string) error {
 
 func (app *App) handleServe(stream network.Stream) {
 	defer stream.Close()
+	reader := bufio.NewReader(stream)
+	writer := bufio.NewWriter(stream)
 	for {
-		// stream.Read()
+		raw, err := reader.ReadBytes('\n')
+		if err != nil {
+			if err == io.EOF {
+				return
+			}
+			log.Println("read error:", err)
+			return
+		}
+
+		payload := Payload{}
+		err = json.Unmarshal(raw, &payload)
+		if err != nil {
+			log.Println("json error:", err)
+			return
+		}
+
+		switch payload.Type {
+		case PL_LS:
+			files, err := os.ReadDir(app.dirName)
+			if err != nil {
+				log.Println("read dir error:", err)
+				return
+			}
+			resPayload := Payload{
+				Type: PL_LS_RES,
+			}
+			for _, file := range files {
+				if file.IsDir() {
+					continue
+				}
+				name := file.Name()
+				resPayload.DirList = append(resPayload.DirList, name)
+			}
+			res, err := json.Marshal(resPayload)
+			if err != nil {
+				log.Println("json error:", err)
+				return
+			}
+			writer.Write(res)
+			writer.Flush()
+		case PL_GET:
+			fileName := payload.TargetFile
+			// file, err := os.Open(app.dirName + "/" + fileName)
+			file, err := os.Open(path.Join(app.dirName, fileName))
+			if err != nil {
+				log.Println("open file error:", err)
+				return
+			}
+			defer file.Close()
+
+			buf := make([]byte, 1024)
+			for {
+				resPayload := Payload{
+					Type: PL_GET_RES,
+				}
+				n, err := file.Read(buf)
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					log.Println("read file error:", err)
+					return
+				}
+				resPayload.Data = buf[:n]
+				res, err := json.Marshal(resPayload)
+				if err != nil {
+					log.Println("json error:", err)
+					return
+				}
+				writer.Write(res)
+			}
+			writer.Flush()
+		}
 	}
 }
 
