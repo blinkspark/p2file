@@ -12,6 +12,7 @@ import (
 	"path"
 	"time"
 
+	"github.com/blinkspark/p2file/config"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -110,6 +111,51 @@ func (app *App) WaitBootstrap(timeoutSec int) error {
 	}
 }
 
+func (app *App) ListDir() ([]string, error) {
+	id, err := peer.Decode(*config.Channel)
+	if err != nil {
+		log.Panicln(err)
+	}
+	pi, err := app.Dht.FindPeer(context.Background(), id)
+	if err != nil {
+		log.Panicln(err)
+	}
+	log.Println(pi)
+	err = app.Host.Connect(context.Background(), pi)
+	if err != nil {
+		log.Panicln(err)
+	}
+
+	topic := "/p2file/" + id.String()
+	stream, err := app.Host.NewStream(context.Background(), id, protocol.ID(topic))
+	if err != nil {
+		log.Panicln(err)
+	}
+	reader := bufio.NewReader(stream)
+	writer := bufio.NewWriter(stream)
+
+	payload := Payload{
+		Type: PL_LS,
+	}
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		log.Panicln(err)
+	}
+
+	_, err = writer.Write(raw)
+	if err != nil {
+		log.Panicln(err)
+	}
+	writer.WriteByte('\n')
+	writer.Flush()
+
+	raw, err = reader.ReadBytes('\n')
+	// TODO
+
+	return nil, nil
+}
+
 func (app *App) Serve(dirName string) error {
 	app.dirName = dirName
 	// listen terminal signal to close the host
@@ -198,7 +244,18 @@ func (app *App) handleServe(stream network.Stream) {
 					return
 				}
 				writer.Write(res)
+				writer.WriteByte('\n')
 			}
+			payload := Payload{
+				Type: PL_GET_RES_DONE,
+			}
+			res, err := json.Marshal(payload)
+			if err != nil {
+				log.Println("json error:", err)
+				return
+			}
+			writer.Write(res)
+			writer.WriteByte('\n')
 			writer.Flush()
 		}
 	}
