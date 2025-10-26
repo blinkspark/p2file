@@ -39,6 +39,7 @@ func main() {
 				log.Println(dir)
 			}
 		} else if *config.GetFile != "" {
+			app.GetFile(*config.GetFile, *config.OutPath)
 			// TODO
 		}
 
