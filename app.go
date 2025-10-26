@@ -114,23 +114,26 @@ func (app *App) WaitBootstrap(timeoutSec int) error {
 func (app *App) ListDir() ([]string, error) {
 	id, err := peer.Decode(*config.Channel)
 	if err != nil {
-		log.Panicln(err)
+		return nil, err
 	}
 	pi, err := app.Dht.FindPeer(context.Background(), id)
 	if err != nil {
-		log.Panicln(err)
+		return nil, err
 	}
 	log.Println(pi)
 	err = app.Host.Connect(context.Background(), pi)
 	if err != nil {
-		log.Panicln(err)
+		return nil, err
 	}
 
 	topic := "/p2file/" + id.String()
+	log.Println("connecting to " + topic)
 	stream, err := app.Host.NewStream(context.Background(), id, protocol.ID(topic))
 	if err != nil {
-		log.Panicln(err)
+		return nil, err
 	}
+	defer stream.Close()
+	log.Println("connected to " + topic)
 	reader := bufio.NewReader(stream)
 	writer := bufio.NewWriter(stream)
 
@@ -138,22 +141,27 @@ func (app *App) ListDir() ([]string, error) {
 		Type: PL_LS,
 	}
 
+	log.Printf("sending payload %+v\n", payload)
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		log.Panicln(err)
+		return nil, err
 	}
 
 	_, err = writer.Write(raw)
 	if err != nil {
-		log.Panicln(err)
+		return nil, err
 	}
 	writer.WriteByte('\n')
 	writer.Flush()
 
 	raw, err = reader.ReadBytes('\n')
-	// TODO
+	err = json.Unmarshal(raw, &payload)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("received payload %+v\n", payload)
 
-	return nil, nil
+	return payload.DirList, nil
 }
 
 func (app *App) Serve(dirName string) error {
@@ -170,6 +178,7 @@ func (app *App) Serve(dirName string) error {
 }
 
 func (app *App) handleServe(stream network.Stream) {
+	log.Println("handle serve")
 	defer stream.Close()
 	reader := bufio.NewReader(stream)
 	writer := bufio.NewWriter(stream)
@@ -213,7 +222,9 @@ func (app *App) handleServe(stream network.Stream) {
 				return
 			}
 			writer.Write(res)
+			writer.WriteByte('\n')
 			writer.Flush()
+			log.Println("send done")
 		case PL_GET:
 			fileName := payload.TargetFile
 			// file, err := os.Open(app.dirName + "/" + fileName)
