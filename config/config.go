@@ -6,5 +6,6 @@ var (
 	Channel   = flag.String("c", "", "target channel")
 	DirName   = flag.String("d", ".", "target dir")
 	GetFile   = flag.String("g", "", "get target file")
+	OutPath   = flag.String("o", "", "output path")
 	IsListing = flag.Bool("l", false, "list all files")
 )

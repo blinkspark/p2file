@@ -164,6 +164,88 @@ func (app *App) ListDir() ([]string, error) {
 	return payload.DirList, nil
 }
 
+func (app *App) GetFile(fileName string, outPath string) error {
+	id, err := peer.Decode(*config.Channel)
+	if err != nil {
+		return err
+	}
+	pi, err := app.Dht.FindPeer(context.Background(), id)
+	if err != nil {
+		return err
+	}
+	log.Println(pi)
+	err = app.Host.Connect(context.Background(), pi)
+	if err != nil {
+		return err
+	}
+
+	topic := "/p2file/" + id.String()
+	log.Println("connecting to " + topic)
+	stream, err := app.Host.NewStream(context.Background(), id, protocol.ID(topic))
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+	log.Println("connected to " + topic)
+	reader := bufio.NewReader(stream)
+	writer := bufio.NewWriter(stream)
+
+	payload := Payload{
+		Type:       PL_GET,
+		TargetFile: fileName,
+	}
+
+	log.Printf("sending payload %+v\n", payload)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	_, err = writer.Write(raw)
+	if err != nil {
+		return err
+	}
+	writer.WriteByte('\n')
+	writer.Flush()
+
+	target := ""
+	if outPath != "" {
+		target = outPath
+	} else {
+		target = fileName
+	}
+	f, err := os.Create(target)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	for {
+		res, err := reader.ReadBytes('\n')
+		if err != nil {
+			return err
+		}
+		err = json.Unmarshal(res, &payload)
+		if err != nil {
+			return err
+		}
+		log.Printf("received payload %+v\n", payload)
+		if payload.Type == PL_GET_RES_DONE {
+			break
+		} else if payload.Type == PL_GET_RES {
+			_, err = f.Write(payload.Data)
+			if err != nil {
+				return err
+			}
+		} else {
+			return fmt.Errorf("unexpected payload type: %d", payload.Type)
+		}
+
+	}
+
+	return nil
+}
+
 func (app *App) Serve(dirName string) error {
 	app.dirName = dirName
 	// listen terminal signal to close the host

@@ -30,13 +30,18 @@ func main() {
 			log.Panicln(err)
 		}
 	} else {
-		dirList, err := app.ListDir()
-		if err != nil {
-			log.Panicln(err)
+		if *config.IsListing {
+			dirList, err := app.ListDir()
+			if err != nil {
+				log.Panicln(err)
+			}
+			for _, dir := range dirList {
+				log.Println(dir)
+			}
+		} else if *config.GetFile != "" {
+			// TODO
 		}
-		for _, dir := range dirList {
-			log.Println(dir)
-		}
+
 	}
 
 	log.Println("Done")
