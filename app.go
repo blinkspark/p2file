@@ -19,12 +19,15 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-libp2p/p2p/discovery/routing"
+	dutil "github.com/libp2p/go-libp2p/p2p/discovery/util"
 )
 
 type App struct {
 	Host    host.Host
 	Dht     *dht.IpfsDHT
 	dirName string
+	rd      *routing.RoutingDiscovery
 }
 
 type NewAppArgs struct {
@@ -81,6 +84,8 @@ func NewApp(opts ...NewAppOpts) (*App, error) {
 		Dht:  dntNode,
 	}
 
+	app.rd = routing.NewRoutingDiscovery(dntNode)
+
 	return app, nil
 }
 
@@ -112,138 +117,157 @@ func (app *App) WaitBootstrap(timeoutSec int) error {
 }
 
 func (app *App) ListDir() ([]string, error) {
-	id, err := peer.Decode(*config.Channel)
-	if err != nil {
-		return nil, err
-	}
-	pi, err := app.Dht.FindPeer(context.Background(), id)
-	if err != nil {
-		return nil, err
-	}
-	log.Println(pi)
-	err = app.Host.Connect(context.Background(), pi)
+	topic := "/p2file/" + *config.Channel
+
+	pis, err := dutil.FindPeers(context.Background(), app.rd, topic)
 	if err != nil {
 		return nil, err
 	}
 
-	topic := "/p2file/" + id.String()
-	log.Println("connecting to " + topic)
-	stream, err := app.Host.NewStream(context.Background(), id, protocol.ID(topic))
-	if err != nil {
-		return nil, err
-	}
-	defer stream.Close()
-	log.Println("connected to " + topic)
-	reader := bufio.NewReader(stream)
-	writer := bufio.NewWriter(stream)
+	for _, pi := range pis {
+		log.Println("found peer:", pi)
 
-	payload := Payload{
-		Type: PL_LS,
-	}
+		err = app.Host.Connect(context.Background(), pi)
+		if err != nil {
+			log.Println("failed to connect to peer:", pi, err)
+			continue
+		}
+		log.Println("connected to peer:", pi)
 
-	log.Printf("sending payload %+v\n", payload)
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
+		stream, err := app.Host.NewStream(context.Background(), pi.ID, protocol.ID(topic))
+		if err != nil {
+			log.Println("failed to create stream:", err)
+			continue
+		}
+		defer stream.Close()
+		log.Println("connected to " + topic)
+		reader := bufio.NewReader(stream)
+		writer := bufio.NewWriter(stream)
 
-	_, err = writer.Write(raw)
-	if err != nil {
-		return nil, err
-	}
-	writer.WriteByte('\n')
-	writer.Flush()
+		payload := Payload{
+			Type: PL_LS,
+		}
 
-	raw, err = reader.ReadBytes('\n')
-	err = json.Unmarshal(raw, &payload)
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("received payload %+v\n", payload)
+		log.Printf("sending payload %+v\n", payload)
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			log.Println("failed to marshal payload:", err)
+			continue
+		}
 
-	return payload.DirList, nil
+		_, err = writer.Write(raw)
+		if err != nil {
+			log.Println("failed to write payload:", err)
+			continue
+		}
+		writer.WriteByte('\n')
+		writer.Flush()
+
+		raw, err = reader.ReadBytes('\n')
+		if err != nil {
+			log.Println("failed to read bytes:", err)
+			continue
+		}
+		err = json.Unmarshal(raw, &payload)
+		if err != nil {
+			log.Println("failed to unmarshal payload:", err)
+			continue
+		}
+		log.Printf("received payload %+v\n", payload)
+
+		return payload.DirList, nil
+	}
+	return nil, fmt.Errorf("no available peers found for channel %s", *config.Channel)
 }
 
 func (app *App) GetFile(fileName string, outPath string) error {
-	id, err := peer.Decode(*config.Channel)
-	if err != nil {
-		return err
-	}
-	pi, err := app.Dht.FindPeer(context.Background(), id)
-	if err != nil {
-		return err
-	}
-	log.Println(pi)
-	err = app.Host.Connect(context.Background(), pi)
+	topic := "/p2file/" + *config.Channel
+
+	pis, err := dutil.FindPeers(context.Background(), app.rd, topic)
 	if err != nil {
 		return err
 	}
 
-	topic := "/p2file/" + id.String()
-	log.Println("connecting to " + topic)
-	stream, err := app.Host.NewStream(context.Background(), id, protocol.ID(topic))
-	if err != nil {
-		return err
-	}
-	defer stream.Close()
-	log.Println("connected to " + topic)
-	reader := bufio.NewReader(stream)
-	writer := bufio.NewWriter(stream)
+	for _, pi := range pis {
+		log.Println("found peer:", pi)
 
-	payload := Payload{
-		Type:       PL_GET,
-		TargetFile: fileName,
-	}
-
-	log.Printf("sending payload %+v\n", payload)
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	_, err = writer.Write(raw)
-	if err != nil {
-		return err
-	}
-	writer.WriteByte('\n')
-	writer.Flush()
-
-	target := ""
-	if outPath != "" {
-		target = outPath
-	} else {
-		target = fileName
-	}
-	f, err := os.Create(target)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	for {
-		res, err := reader.ReadBytes('\n')
+		err = app.Host.Connect(context.Background(), pi)
 		if err != nil {
+			log.Println("failed to connect to peer:", pi, err)
+			continue
+		}
+		log.Println("connected to peer:", pi)
+
+		stream, err := app.Host.NewStream(context.Background(), pi.ID, protocol.ID(topic))
+		if err != nil {
+			log.Println("failed to create stream:", err)
+			continue
+		}
+		defer stream.Close()
+		log.Println("connected to " + topic)
+		reader := bufio.NewReader(stream)
+		writer := bufio.NewWriter(stream)
+
+		payload := Payload{
+			Type:       PL_GET,
+			TargetFile: fileName,
+		}
+
+		log.Printf("sending payload %+v\n", payload)
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			log.Println("failed to marshal payload:", err)
+			continue
+		}
+
+		_, err = writer.Write(raw)
+		if err != nil {
+			log.Println("failed to write payload:", err)
+			continue
+		}
+		writer.WriteByte('\n')
+		writer.Flush()
+
+		target := fileName
+		if outPath != "" {
+			target = outPath
+		}
+		f, err := os.Create(target)
+		if err != nil {
+			log.Println("create file error:", err)
 			return err
 		}
-		err = json.Unmarshal(res, &payload)
-		if err != nil {
-			return err
-		}
-		log.Printf("received payload %+v\n", payload)
-		if payload.Type == PL_GET_RES_DONE {
-			break
-		} else if payload.Type == PL_GET_RES {
-			_, err = f.Write(payload.Data)
+		defer f.Close()
+
+		for {
+			res, err := reader.ReadBytes('\n')
 			if err != nil {
+				log.Println("read error:", err)
 				return err
 			}
-		} else {
-			return fmt.Errorf("unexpected payload type: %d", payload.Type)
+			err = json.Unmarshal(res, &payload)
+			if err != nil {
+				log.Println("unmarshal error:", err)
+				return err
+			}
+			log.Printf("received payload %+v\n", payload)
+			if payload.Type == PL_GET_RES_DONE {
+				break
+			} else if payload.Type == PL_GET_RES {
+				_, err = f.Write(payload.Data)
+				if err != nil {
+					log.Println("write file error:", err)
+					return err
+				}
+			} else {
+				return fmt.Errorf("unexpected payload type: %d", payload.Type)
+			}
 		}
 
+		return nil
 	}
 
-	return nil
+	return fmt.Errorf("no available peers found for channel %s", *config.Channel)
 }
 
 func (app *App) Serve(dirName string) error {
@@ -253,6 +277,8 @@ func (app *App) Serve(dirName string) error {
 	signal.Notify(sigchan, os.Interrupt)
 
 	topic := "/p2file/" + app.Host.ID().String()
+
+	dutil.Advertise(context.Background(), app.rd, topic)
 	app.Host.SetStreamHandler(protocol.ID(topic), app.handleServe)
 
 	<-sigchan
